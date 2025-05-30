@@ -4,3 +4,4 @@ aiofiles
 python-multipart
 pandas
 openpyxl
+google-cloud-storage

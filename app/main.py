@@ -5,10 +5,22 @@ from io import BytesIO
 import os
 import pandas as pd
 
+from google.cloud import storage 
+
 app = FastAPI()
 
 CSV_OUTPUT_DIR = "converted_csvs"
 os.makedirs(CSV_OUTPUT_DIR, exist_ok=True)
+
+# GCS bucket name
+GCS_BUCKET_NAME = "featurebox-ai-uploads"
+
+def upload_to_gcs(local_file_path: str, destination_blob_name: str):
+    client = storage.Client()
+    bucket = client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(destination_blob_name)
+    blob.upload_from_filename(local_file_path)
+    return f"gs://{GCS_BUCKET_NAME}/{destination_blob_name}"
 
 @app.post("/upload/")
 async def upload_zip(file: UploadFile = File(...)):
@@ -22,6 +34,8 @@ async def upload_zip(file: UploadFile = File(...)):
             excel_files = [f for f in file_list if f.lower().endswith((".xls", ".xlsx"))]
 
             saved_files = []
+            gcs_uris = []
+
             for excel_file in excel_files:
                 with zip_ref.open(excel_file) as excel_fp:
                     df = pd.read_excel(BytesIO(excel_fp.read()))
@@ -29,6 +43,11 @@ async def upload_zip(file: UploadFile = File(...)):
                     csv_path = os.path.join(CSV_OUTPUT_DIR, f"{base_name}.csv")
                     df.to_csv(csv_path, index=False)
                     saved_files.append(csv_path)
+
+                    # Upload to GCS
+                    gcs_path = f"converted_csvs/{base_name}.csv"
+                    gcs_uri = upload_to_gcs(csv_path, gcs_path)
+                    gcs_uris.append(gcs_uri)
 
     except BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid or corrupt ZIP file.")
@@ -41,5 +60,6 @@ async def upload_zip(file: UploadFile = File(...)):
         "total_files_in_zip": len(file_list),
         "excel_files_converted": len(saved_files),
         "csv_files_saved": saved_files,
-        "message": f"Converted {len(saved_files)} Excel files to CSV and saved locally."
+        "csv_files_gcs": gcs_uris,
+        "message": f"Converted {len(saved_files)} Excel files to CSV, saved locally, and uploaded to GCS."
     })
